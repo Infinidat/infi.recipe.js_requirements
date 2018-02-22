@@ -45,14 +45,10 @@ class JSDep(object):
 
         spec_split = re.compile("^([^!<>=~^]+)([!<>=~^]+[^!<>=~^]+)?$")
         self.spec_requirements = [spec_split.findall(pkg)[0] for pkg in eval(js_options['javascript-packages'])]
-        options['js-directory'] = js_options['js-directory']
-        self.develop_requirements = options['develop-js-requirements'] = js_options['develop-js-requirements']
-        options['develop-js-directory'] = js_options['develop-js-directory']
         self.symlink_dir = options['symlink-to-directory'] = js_options['symlink-to-directory']
 
-        self.options = options
         self.created = options.created
-        self.output_folder = options['js-directory'] or self.DEFAULT_DIRECTORY
+        self.output_folder = js_options['js-directory'] or self.DEFAULT_DIRECTORY
         self.versions_spec = defaultdict(set)
         self.reader = codecs.getreader('utf-8')
 
@@ -223,7 +219,7 @@ class JSDep(object):
             pkg_metadata = self._get_metadata(pkg_name, version)
             self._download_package(pkg_metadata)
 
-        return self.options.created()
+        return self.created()
 
     def update(self):
         return self._setup()
