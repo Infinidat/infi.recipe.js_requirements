@@ -41,10 +41,15 @@ class JSDep(object):
         super(JSDep, self).__init__()
         self.buildout = buildout
         self.name = name
+        buildout_section = buildout['buildout']
         js_options = buildout['js-requirements']
 
-        spec_split = re.compile("^([^!<>=~^]+)([!<>=~^]+[^!<>=~^]+)?$")
-        self.spec_requirements = [spec_split.findall(pkg)[0] for pkg in eval(js_options['javascript-packages'])]
+        if buildout_section.get('js_versions', False):
+            js_versions_section = buildout['js_versions']
+            self.spec_requirements = js_versions_section.items()
+        else:
+            spec_split = re.compile("^([^!<>=~^]+)([!<>=~^]+[^!<>=~^]+)?$")
+            self.spec_requirements = [spec_split.findall(pkg)[0] for pkg in eval(js_options['javascript-packages'])]
         self.symlink_dir = options['symlink-to-directory'] = js_options['symlink-to-directory']
 
         self.created = options.created
@@ -203,6 +208,12 @@ class JSDep(object):
         """
         return self._get_metadata(requirement_name, version).get('dependencies', dict())
 
+    def _write_lock(self, selected_versions):
+        versions = dict([(req, str(ver)) for req, ver in selected_versions.items()])
+        self.created('.package-lock.json')
+        with open('.package-lock.json', 'wb') as pljson:
+            json.dump(versions, pljson)
+
     def _setup(self):
         """
         Main function to be run by buildout
@@ -212,12 +223,14 @@ class JSDep(object):
         if self.symlink_dir:
             mkdir_p(self.symlink_dir)
         selected_versions = self._resolve_dependencies()
-        print('\n\nVersions Selected for downloading:\n')
-        print('\t' + '\n\t'.join(['{}: {}'.format(req, ver) for req, ver in selected_versions.items()]))
-        print('\n\nStarting Download:\n')
-        for pkg_name, version in selected_versions.items():
-            pkg_metadata = self._get_metadata(pkg_name, version)
-            self._download_package(pkg_metadata)
+        if selected_versions:
+            self._write_lock(selected_versions)
+            print('\n\nVersions Selected for downloading:\n')
+            print('\t' + '\n\t'.join(['{}: {}'.format(req, ver) for req, ver in selected_versions.items()]))
+            print('\n\nStarting Download:\n')
+            for pkg_name, version in selected_versions.items():
+                pkg_metadata = self._get_metadata(pkg_name, version)
+                self._download_package(pkg_metadata)
 
         return self.created()
 
