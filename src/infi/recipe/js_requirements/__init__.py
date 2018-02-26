@@ -1,3 +1,5 @@
+import shutil
+
 __import__("pkg_resources").declare_namespace(__name__)
 
 import tarfile
@@ -11,8 +13,8 @@ from six.moves import urllib
 from infi.pyutils import lazy
 from collections import defaultdict
 from semantic_version import Version, Spec
-import zc.buildout.easy_install
 import codecs
+import zc.buildout
 
 
 class DependencyError(Exception):
@@ -44,7 +46,7 @@ class JSDep(object):
         buildout_section = buildout['buildout']
         js_options = buildout['js-requirements']
 
-        if buildout_section.get('js_versions', False):
+        if get_bool(buildout_section, 'js_versions'):
             js_versions_section = buildout['js_versions']
             self.spec_requirements = js_versions_section.items()
         else:
@@ -60,10 +62,10 @@ class JSDep(object):
     @staticmethod
     def _validate_hash(data, shasum):
         """
-        Validates the data shasum vs the given shasum from the repository
-        :param data: data to calculate shasum for it
-        :param shasum: the shasum provided
-        :return: True on valid, False otherwise
+        Validates the data shasum against the given shasum from the repository
+        :param bytes|str data: Data to evaluate
+        :param str shasum: Provided shasum hash
+        :return bool: True on valid, False otherwise
         """
         from hashlib import sha1
         digest = sha1(data).hexdigest()
@@ -74,32 +76,34 @@ class JSDep(object):
             return False
 
     @lazy.cached_method
-    def _get_metadata(self, pkg_name, ver=None):
+    def _get_metadata(self, pkg_name):
         """
         Gets the JSON metadata object from the class specified REGISTRY
-        :param pkg_name: str The package name to query about
-        :param ver: semantic_version.Version if provided will only get metadata for specified version,
-                    else will retrieve general metadata
-        :return: Dict
+        :param str pkg_name: The package name to query about
+        :return dict: Package metadata dictionary
         """
-        if ver:
-            url = urllib.parse.urljoin(self.REGISTRY, '/'.join([pkg_name, str(ver)]))
-        else:
-            url = urllib.parse.urljoin(self.REGISTRY, pkg_name)
-        response = urllib.request.urlopen(url)
-        pkg_metadata = json.load(self.reader(response))
-        return pkg_metadata
+        pkg_name = urllib.parse.quote(pkg_name, safe='@')
+        url = urllib.parse.urljoin(self.REGISTRY, pkg_name)
+        # TODO(fanchi) - 25/Feb/2018: Add support for MIRROR autoswitching on failure
+        try:
+            response = urllib.request.urlopen(url)
+            pkg_metadata = json.load(self.reader(response))
+            return pkg_metadata
+        except urllib.error.HTTPError as e:
+            print('Could not download {} from: {} with error: {}'. format(pkg_name, url, e.msg))
+            exit(-1)
 
     def _resolve_dependencies(self):
         """
         Resolves the dependencies according to the specified constraints. Starts with the dependencies provided
         from the buildout.cfg and continue resolving further package dependencies in a BFS manner.
-        :return: Dict(package_name:str = selected_version:semantic_version.Version)
+        :return dict: {package_name:str = Version}
         """
+        matching_versions = dict()
+
         # Initialization of the BFS
-        resolved = dict()
         bfs_stack = list()
-        for requirement_name, spec_str in self.spec_requirements:
+        for requirement_name, spec_str in sorted(self.spec_requirements, key=lambda x: x[0].lower()):
             self._add_spec(requirement_name, spec_str)
             bfs_stack.append(requirement_name)
 
@@ -109,27 +113,28 @@ class JSDep(object):
             requirement_name = bfs_stack.pop(0)
             available_versions = self._get_available_versions(requirement_name)
             spec = self._get_spec(requirement_name)
-            matching_version = spec.select(available_versions)
-            if matching_version is None:
-                msg = 'Unmatched dependency for {}\nSpecification requirement: {}\nAvailable versions: {}'
+            best_matching_version = spec.select(available_versions)
+            if best_matching_version is None:
+                msg = 'Unmatched dependency for {}\nSpecification requirement: {}\nAvailable versions: {}\n' \
+                      'Use NPM semver calculator to resolve: https://semver.npmjs.com/'
                 error = msg.format(requirement_name, spec, ', '.join(reversed(map(str, available_versions))))
                 raise RequirementMatchError(error)
 
-            resolved[requirement_name] = matching_version
+            matching_versions[requirement_name] = best_matching_version
 
-            # Stack population
-            dependencies = self._get_dependencies(requirement_name, matching_version)
-            for dependency, dep_ver in dependencies.items():
-                self._add_spec(dependency, dep_ver)
-                bfs_stack.append(dependency)
+            # BFS stack population with dependencies
+            dependencies = self._get_dependencies(requirement_name, best_matching_version)
+            for dependency_name, dependency_version in dependencies:
+                self._add_spec(dependency_name, dependency_version)
+                bfs_stack.append(dependency_name)
 
-        return resolved
+        return matching_versions
 
     def _add_spec(self, requirement_name, spec_str):
         """
         Adds a version specification (constraint) to the set of constraints for each package requirement
-        :param requirement_name: The package name as string
-        :param spec_str: semantic_version.Version constraint as string (e.g. >=1.1.0, ~2.3.0, ^3.4.5-pre.2+build.4)
+        :param str requirement_name: The package name
+        :param str spec_str: Semantic version constraint as string (e.g. >=1.1.0, ~2.3.0, ^3.4.5-pre.2+build.4)
         """
         spec_str = spec_str or '>=0.0.0'
         self.versions_spec[requirement_name].add(spec_str)
@@ -137,19 +142,27 @@ class JSDep(object):
     def _get_spec(self, requirement_name):
         """
         Creates a version range specification from the set of constraints for the required package name.
-        :param requirement_name: The package name as string
-        :return: semantic_version.Spec(all version specification)
+        :param str requirement_name: The package name
+        :return Spec: All version specification
         """
         return Spec(','.join(self.versions_spec[requirement_name]))
 
-    def _download_package(self, pkg_metadata, validate=True):
+    def _download_package(self, pkg_metadata, validate=True, update=False):
         """
         Downloads specified package using the NPM REGISTRY
-        :param pkg_metadata: Metadata object
-        :param validate: If true performs shasum validation on the file downloaded. default=True
-        :return: True on success, false otherwise
+        :param dict pkg_metadata: Metadata object
+        :param bool validate: If true performs shasum validation on the file downloaded (default True)
+        :param bool update: If true, removes the old extract package folder, else skips download (default True)
+        :return bool: True on success, false otherwise
         """
         pkg_name = pkg_metadata.get('name')
+        package_folder = os.path.join(self.output_folder, pkg_name)
+        if os.path.isdir(package_folder):
+            if update:
+                shutil.rmtree(package_folder)
+            else:
+                print('\t{} already installed, change buildout config to reinstall or update.'.format(pkg_name))
+                return
         dist = pkg_metadata.get('dist')
         tar_url = dist.get('tarball')
         shasum = dist.get('shasum')
@@ -163,19 +176,18 @@ class JSDep(object):
 
         compressed_file.seek(0)
         with tarfile.open(fileobj=compressed_file, mode='r:gz') as tar:
-            package_folder = os.path.join(self.output_folder, pkg_name)
             tar.extractall(self.output_folder)
         if os.path.isdir(os.path.join(self.output_folder, 'package')):
             self.created(package_folder)
-            os.rename(os.path.join(self.output_folder, 'package'), package_folder)
+            shutil.move(os.path.join(self.output_folder, 'package'), package_folder)
             if self.symlink_dir and 'main' in pkg_metadata:
                 self._create_symlink(package_folder, pkg_metadata['main'])
 
     def _create_symlink(self, source_path, main):
         """
         Wrapper method for creating a correct symlink (or windows/ntfs link) to the main file
-        :param source_path: str
-        :param main: str
+        :param str source_path: Path to all downloaded packages
+        :param str main: The main file name/location in the package
         """
         main_file = os.path.realpath(os.path.join(source_path, main))
         if not os.path.isfile(main_file):
@@ -192,8 +204,8 @@ class JSDep(object):
     def _get_available_versions(self, requirement_name):
         """
         Retrieves a sorted list of all available versions for the require package
-        :param requirement_name: str
-        :return: List(semantic_version.Version)
+        :param str requirement_name: Package name to query
+        :return list: [Version]
         """
         return sorted(map(Version, self._get_metadata(requirement_name).get('versions', dict()).keys()))
 
@@ -202,11 +214,14 @@ class JSDep(object):
         """
         Retrieves all of the package dependencies of a specific package and version and returns a dictionary of
         package dependency name and the spec str (e.g. >=3.1.1)
-        :param requirement_name: str
-        :param version: semantic_version.Version
-        :return: Dict(pkg_name:str = spec:str)
+        :param str requirement_name: Package name to query
+        :param Version version: Specified version to query
+        :return dict: {pkg_name:str = spec:str}
         """
-        return self._get_metadata(requirement_name, version).get('dependencies', dict())
+        pkg_metadata = self._get_metadata(requirement_name)
+        versions = pkg_metadata.get('versions', dict())
+        version = versions.get(str(version), dict())
+        return sorted(version.get('dependencies', dict()).items())
 
     def _write_lock(self, selected_versions):
         versions = dict([(req, str(ver)) for req, ver in selected_versions.items()])
@@ -214,7 +229,7 @@ class JSDep(object):
         with open('.package-lock.json', 'wb') as pljson:
             json.dump(versions, pljson)
 
-    def _setup(self):
+    def _setup(self, update=False):
         """
         Main function to be run by buildout
         :return: List(all paths/files created:str)
@@ -226,28 +241,35 @@ class JSDep(object):
         if selected_versions:
             self._write_lock(selected_versions)
             print('\n\nVersions Selected for downloading:\n')
-            print('\t' + '\n\t'.join(['{}: {}'.format(req, ver) for req, ver in selected_versions.items()]))
-            print('\n\nStarting Download:\n')
+            print('\t' + '\n\t'.join(['{}: {}'.format(req, ver) for req, ver in selected_versions.items()]) + '\n')
             for pkg_name, version in selected_versions.items():
-                pkg_metadata = self._get_metadata(pkg_name, version)
-                self._download_package(pkg_metadata)
+                pkg_metadata = self._get_metadata(pkg_name)
+                version_metadata = pkg_metadata.get('versions', dict()).get(str(version), dict())
+                self._download_package(version_metadata, update)
 
         return self.created()
 
     def update(self):
-        return self._setup()
+        return self._setup(update=True)
 
     def install(self):
         return self._setup()
 
 
 def get_bool(options, name, default=False):
+    """
+    Evaluates a dictionary string to boolean
+    :param dict options:
+    :param str name: dict key
+    :param bool default: Default evaluation (default False)
+    :return bool:
+    """
     value = options.get(name)
     if not value:
         return default
-    if value == 'true':
+    if value.lower() == 'true':
         return True
-    elif value == 'false':
+    elif value.lower() == 'false':
         return False
     else:
         raise zc.buildout.UserError(
@@ -255,6 +277,10 @@ def get_bool(options, name, default=False):
 
 
 def mkdir_p(path):
+    """
+    Safe creation of nested path with parents
+    :param str path: Path to create
+    """
     try:
         os.makedirs(path)
     except OSError as exc:
@@ -331,6 +357,11 @@ class ChangeDirectory(object):
 
 
 def symlink(source, link_name):
+    """
+    Creates a symbolic link on *NIX and Windows
+    :param str source: Source path
+    :param str link_name: Name of the newly created link
+    """
     os_symlink = getattr(os, "symlink", None)
     if callable(os_symlink):
         os_symlink(source, link_name)

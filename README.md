@@ -8,6 +8,10 @@ This is a buildout recipe that resolves project Javascript requirements and reso
 * Validates sha1 sum for all downloads.
 * Creates (symbolic on unix) links to the main file in specified directory. 
 
+Known Issues
+============
+* NPM uses nesting (creating subfolders with specific versions) in order to resolve version conflicts, we do not.
+So try to avoid using packages with inherent dependency conflicts (a good example is ionic)
 
 Checking out the code
 =====================
