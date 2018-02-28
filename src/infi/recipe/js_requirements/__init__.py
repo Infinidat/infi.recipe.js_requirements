@@ -1,7 +1,6 @@
-import shutil
-
 __import__("pkg_resources").declare_namespace(__name__)
 
+import shutil
 import tarfile
 import json
 import os
@@ -10,7 +9,6 @@ import errno
 
 from six import BytesIO
 from six.moves import urllib
-from infi.pyutils import lazy
 from collections import defaultdict
 from semantic_version import Version, Spec
 import codecs
@@ -58,6 +56,7 @@ class JSDep(object):
         self.output_folder = js_options['js-directory'] or self.DEFAULT_DIRECTORY
         self.versions_spec = defaultdict(set)
         self.reader = codecs.getreader('utf-8')
+        self.metadatas = {}
 
     @staticmethod
     def _validate_hash(data, shasum):
@@ -75,7 +74,6 @@ class JSDep(object):
             print('Invalid shasum, got: {}  , expected: {}'.format(digest, shasum))
             return False
 
-    @lazy.cached_method
     def _get_metadata(self, pkg_name):
         """
         Gets the JSON metadata object from the class specified REGISTRY
@@ -83,15 +81,19 @@ class JSDep(object):
         :return dict: Package metadata dictionary
         """
         pkg_name = urllib.parse.quote(pkg_name, safe='@')
-        url = urllib.parse.urljoin(self.REGISTRY, pkg_name)
-        # TODO(fanchi) - 25/Feb/2018: Add support for MIRROR autoswitching on failure
-        try:
-            response = urllib.request.urlopen(url)
-            pkg_metadata = json.load(self.reader(response))
-            return pkg_metadata
-        except urllib.error.HTTPError as e:
-            print('Could not download {} from: {} with error: {}'. format(pkg_name, url, e.msg))
-            exit(-1)
+        if self.metadatas.get(pkg_name):
+            return self.metadatas.get(pkg_name)
+        else:
+            url = urllib.parse.urljoin(self.REGISTRY, pkg_name)
+            # TODO(fanchi) - 25/Feb/2018: Add support for MIRROR autoswitching on failure
+            try:
+                response = urllib.request.urlopen(url)
+                pkg_metadata = json.load(self.reader(response))
+                self.metadatas[pkg_name] = pkg_metadata
+                return pkg_metadata
+            except urllib.error.HTTPError as e:
+                print('Could not download {} from: {} with error: {}'. format(pkg_name, url, e.msg))
+                exit(-1)
 
     def _resolve_dependencies(self):
         """
@@ -200,7 +202,6 @@ class JSDep(object):
                 os.remove(file_path)
             symlink(main_file, main_file_name)
 
-    @lazy.cached_method
     def _get_available_versions(self, requirement_name):
         """
         Retrieves a sorted list of all available versions for the require package
@@ -209,7 +210,6 @@ class JSDep(object):
         """
         return sorted(map(Version, self._get_metadata(requirement_name).get('versions', dict()).keys()))
 
-    @lazy.cached_method
     def _get_dependencies(self, requirement_name, version):
         """
         Retrieves all of the package dependencies of a specific package and version and returns a dictionary of
@@ -225,8 +225,9 @@ class JSDep(object):
 
     def _write_lock(self, selected_versions):
         versions = dict([(req, str(ver)) for req, ver in selected_versions.items()])
-        self.created('.package-lock.json')
-        with open('.package-lock.json', 'wb') as pljson:
+        lock_path = os.path.join(self.output_folder, '.package-lock.json')
+        self.created(lock_path)
+        with open(lock_path, 'w') as pljson:
             json.dump(versions, pljson)
 
     def _setup(self, update=False):
