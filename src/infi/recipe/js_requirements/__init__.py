@@ -43,7 +43,7 @@ class JSDep(object):
         self.name = name
         buildout_section = buildout['buildout']
         js_options = buildout['js-requirements']
-
+        self.newest = get_bool(buildout_section, 'newest')
         if get_bool(buildout_section, 'js_versions'):
             js_versions_section = buildout['js_versions']
             self.spec_requirements = js_versions_section.items()
@@ -85,7 +85,6 @@ class JSDep(object):
             return self.metadatas.get(pkg_name)
         else:
             url = urllib.parse.urljoin(self.REGISTRY, pkg_name)
-            # TODO(fanchi) - 25/Feb/2018: Add support for MIRROR autoswitching on failure
             try:
                 response = urllib.request.urlopen(url)
                 pkg_metadata = json.load(self.reader(response))
@@ -139,6 +138,7 @@ class JSDep(object):
         :param str spec_str: Semantic version constraint as string (e.g. >=1.1.0, ~2.3.0, ^3.4.5-pre.2+build.4)
         """
         spec_str = spec_str or '>=0.0.0'
+        spec_str = '~' + spec_str.replace('.x', '.0') if '.x' in spec_str else spec_str
         self.versions_spec[requirement_name].add(spec_str)
 
     def _get_spec(self, requirement_name):
@@ -149,21 +149,20 @@ class JSDep(object):
         """
         return Spec(','.join(self.versions_spec[requirement_name]))
 
-    def _download_package(self, pkg_metadata, validate=True, update=False):
+    def _download_package(self, pkg_metadata, validate=True):
         """
         Downloads specified package using the NPM REGISTRY
         :param dict pkg_metadata: Metadata object
         :param bool validate: If true performs shasum validation on the file downloaded (default True)
-        :param bool update: If true, removes the old extract package folder, else skips download (default True)
         :return bool: True on success, false otherwise
         """
         pkg_name = pkg_metadata.get('name')
         package_folder = os.path.join(self.output_folder, pkg_name)
         if os.path.isdir(package_folder):
-            if update:
+            if self.newest:
                 shutil.rmtree(package_folder)
             else:
-                print('\t{} already installed, change buildout config to reinstall or update.'.format(pkg_name))
+                print('\t{} already installed, use --newest.'.format(pkg_name))
                 return
         dist = pkg_metadata.get('dist')
         tar_url = dist.get('tarball')
@@ -180,7 +179,7 @@ class JSDep(object):
         with tarfile.open(fileobj=compressed_file, mode='r:gz') as tar:
             tar.extractall(self.output_folder)
         if os.path.isdir(os.path.join(self.output_folder, 'package')):
-            self.created(package_folder)
+            # self.created(package_folder)
             shutil.move(os.path.join(self.output_folder, 'package'), package_folder)
             if self.symlink_dir and 'main' in pkg_metadata:
                 self._create_symlink(package_folder, pkg_metadata['main'])
@@ -230,7 +229,7 @@ class JSDep(object):
         with open(lock_path, 'w') as pljson:
             json.dump(versions, pljson)
 
-    def _setup(self, update=False):
+    def _setup(self):
         """
         Main function to be run by buildout
         :return: List(all paths/files created:str)
@@ -238,23 +237,22 @@ class JSDep(object):
         mkdir_p(self.output_folder)
         if self.symlink_dir:
             mkdir_p(self.symlink_dir)
-        selected_versions = self._resolve_dependencies()
-        if selected_versions:
-            self._write_lock(selected_versions)
-            print('\n\nVersions Selected for downloading:\n')
-            print('\t' + '\n\t'.join(['{}: {}'.format(req, ver) for req, ver in selected_versions.items()]) + '\n')
-            for pkg_name, version in selected_versions.items():
-                pkg_metadata = self._get_metadata(pkg_name)
-                version_metadata = pkg_metadata.get('versions', dict()).get(str(version), dict())
-                self._download_package(version_metadata, update)
-
+        try:
+            selected_versions = self._resolve_dependencies()
+            if selected_versions:
+                self._write_lock(selected_versions)
+                print('\n\nVersions Selected for downloading:\n')
+                print('\t' + '\n\t'.join(['{}: {}'.format(req, ver) for req, ver in selected_versions.items()]) + '\n')
+                for pkg_name, version in selected_versions.items():
+                    pkg_metadata = self._get_metadata(pkg_name)
+                    version_metadata = pkg_metadata.get('versions', dict()).get(str(version), dict())
+                    self._download_package(version_metadata)
+        except (RequirementMatchError, DependencyError) as e:
+            print(e.message)
         return self.created()
 
-    def update(self):
-        return self._setup(update=True)
-
-    def install(self):
-        return self._setup()
+    update = _setup
+    install = _setup
 
 
 def get_bool(options, name, default=False):
