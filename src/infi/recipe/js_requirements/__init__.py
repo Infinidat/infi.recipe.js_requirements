@@ -162,6 +162,8 @@ class JSDep(object):
             if self.newest:
                 shutil.rmtree(package_folder)
             else:
+                if self.symlink_dir and 'main' in pkg_metadata:
+                    self._create_symlink(package_folder, pkg_metadata['main'])
                 print('\t{} already installed, use --newest.'.format(pkg_name))
                 return
         dist = pkg_metadata.get('dist')
