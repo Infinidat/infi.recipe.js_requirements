@@ -138,6 +138,7 @@ class JSDep(object):
         :param str spec_str: Semantic version constraint as string (e.g. >=1.1.0, ~2.3.0, ^3.4.5-pre.2+build.4)
         """
         spec_str = spec_str or '>=0.0.0'
+        spec_str = spec_str.replace(' ', '')
         spec_str = '~' + spec_str.replace('.x', '.0') if '.x' in spec_str else spec_str
         self.versions_spec[requirement_name].add(spec_str)
 
