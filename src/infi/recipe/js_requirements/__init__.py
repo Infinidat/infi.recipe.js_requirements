@@ -9,6 +9,7 @@ import errno
 
 from six import BytesIO
 from six.moves import urllib
+import requests
 from collections import defaultdict
 from semantic_version import Version, Spec
 import codecs
@@ -86,8 +87,7 @@ class JSDep(object):
         else:
             url = urllib.parse.urljoin(self.REGISTRY, pkg_name)
             try:
-                response = urllib.request.urlopen(url)
-                pkg_metadata = json.load(self.reader(response))
+                pkg_metadata = requests.get(url).json()
                 self.metadatas[pkg_name] = pkg_metadata
                 return pkg_metadata
             except urllib.error.HTTPError as e:
@@ -173,8 +173,8 @@ class JSDep(object):
 
         print('\tDownloading {} from {}'.format(pkg_name, tar_url))
 
-        tar_data = urllib.request.urlopen(tar_url)
-        compressed_file = BytesIO(tar_data.read())
+        tar_data = requests.get(tar_url)
+        compressed_file = BytesIO(tar_data.content)
         if validate and not self._validate_hash(compressed_file.read(), shasum):
             return None
 
