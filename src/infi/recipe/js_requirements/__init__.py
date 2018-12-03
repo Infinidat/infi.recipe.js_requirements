@@ -199,7 +199,7 @@ class JSDep(object):
             main_file += '.js'
         main_file_name = os.path.basename(main_file)
         with change_working_directory(os.path.realpath(self.symlink_dir)) as cd:
-            file_path = os.path.join(cd.current, main_file_name)
+            file_path = os.path.join(cd, main_file_name)
             self.created(file_path)
             if os.path.islink(file_path):
                 os.remove(file_path)
@@ -301,7 +301,7 @@ def change_working_directory(path):
     prev_cwd = os.getcwd()
     os.chdir(path)
     try:
-        yield
+        yield os.getcwd()
     finally:
         os.chdir(prev_cwd)
 
