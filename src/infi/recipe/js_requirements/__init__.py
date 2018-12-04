@@ -6,9 +6,11 @@ import json
 import os
 import re
 import errno
+import contextlib
 
 from six import BytesIO
 from six.moves import urllib
+import requests
 from collections import defaultdict
 from semantic_version import Version, Spec
 import codecs
@@ -86,8 +88,7 @@ class JSDep(object):
         else:
             url = urllib.parse.urljoin(self.REGISTRY, pkg_name)
             try:
-                response = urllib.request.urlopen(url)
-                pkg_metadata = json.load(self.reader(response))
+                pkg_metadata = requests.get(url).json()
                 self.metadatas[pkg_name] = pkg_metadata
                 return pkg_metadata
             except urllib.error.HTTPError as e:
@@ -173,8 +174,8 @@ class JSDep(object):
 
         print('\tDownloading {} from {}'.format(pkg_name, tar_url))
 
-        tar_data = urllib.request.urlopen(tar_url)
-        compressed_file = BytesIO(tar_data.read())
+        tar_data = requests.get(tar_url)
+        compressed_file = BytesIO(tar_data.content)
         if validate and not self._validate_hash(compressed_file.read(), shasum):
             return None
 
@@ -197,8 +198,8 @@ class JSDep(object):
         if not os.path.isfile(main_file):
             main_file += '.js'
         main_file_name = os.path.basename(main_file)
-        with ChangeDirectory(os.path.realpath(self.symlink_dir)) as cd:
-            file_path = os.path.join(cd.current, main_file_name)
+        with change_working_directory(os.path.realpath(self.symlink_dir)) as cd:
+            file_path = os.path.join(cd, main_file_name)
             self.created(file_path)
             if os.path.islink(file_path):
                 os.remove(file_path)
@@ -292,70 +293,17 @@ def mkdir_p(path):
             raise
 
 
-class ChangeDirectory(object):
+@contextlib.contextmanager
+def change_working_directory(path):
     """
-    ChangeDirectory is a context manager that allowing
-    you to temporary change the working directory.
-
-    >>> import tempfile
-    >>> td = os.path.realpath(tempfile.mkdtemp())
-    >>> currentdirectory = os.getcwd()
-    >>> with ChangeDirectory(td) as cd:
-    ...     assert cd.current == td
-    ...     assert os.getcwd() == td
-    ...     assert cd.previous == currentdirectory
-    ...     assert os.path.normpath(os.path.join(cd.current, cd.relative)) == cd.previous
-    ...
-    >>> assert os.getcwd() == currentdirectory
-    >>> with ChangeDirectory(td) as cd:
-    ...     os.mkdir('foo')
-    ...     with ChangeDirectory('foo') as cd2:
-    ...         assert cd2.previous == cd.current
-    ...         assert cd2.relative == '..'
-    ...         assert os.getcwd() == os.path.join(td, 'foo')
-    ...     assert os.getcwd() == td
-    ...     assert cd.current == td
-    ...     os.rmdir('foo')
-    ...
-    >>> os.rmdir(td)
-    >>> with ChangeDirectory('.') as cd:
-    ...     assert cd.current == currentdirectory
-    ...     assert cd.current == cd.previous
-    ...     assert cd.relative == '.'
+    A context manager to change current working directory to path, change back on exit
     """
-
-    def __init__(self, directory):
-        self._dir = directory
-        self._cwd = os.getcwd()
-        self._pwd = self._cwd
-
-    @property
-    def current(self):
-        return self._cwd
-
-    @property
-    def previous(self):
-        return self._pwd
-
-    @property
-    def relative(self):
-        c = self._cwd.split(os.path.sep)
-        p = self._pwd.split(os.path.sep)
-        ll = min(len(c), len(p))
-        i = 0
-        while i < ll and c[i] == p[i]:
-            i += 1
-        return os.path.normpath(os.path.join(*(['.'] + (['..'] * (len(c) - i)) + p[i:])))
-
-    def __enter__(self):
-        self._pwd = self._cwd
-        os.chdir(self._dir)
-        self._cwd = os.getcwd()
-        return self
-
-    def __exit__(self, *args):
-        os.chdir(self._pwd)
-        self._cwd = self._pwd
+    prev_cwd = os.getcwd()
+    os.chdir(path)
+    try:
+        yield os.getcwd()
+    finally:
+        os.chdir(prev_cwd)
 
 
 def symlink(source, link_name):
