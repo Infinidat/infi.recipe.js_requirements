@@ -197,6 +197,9 @@ class JSDep(object):
         main_file = os.path.realpath(os.path.join(source_path, main))
         if not os.path.isfile(main_file):
             main_file += '.js'
+        if not os.path.isfile(main_file):
+            print('\tWARNING: Could not create symlink for {}, no such file.'.format(main_file))
+            return
         main_file_name = os.path.basename(main_file)
         with change_working_directory(os.path.realpath(self.symlink_dir)) as cd:
             file_path = os.path.join(cd, main_file_name)
