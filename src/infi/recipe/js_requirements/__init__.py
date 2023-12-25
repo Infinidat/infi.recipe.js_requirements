@@ -140,7 +140,6 @@ class JSDep(object):
         """
         if not spec_str:
             return
-        spec_str = spec_str.replace(' ', '')
         spec_str = '~' + spec_str.replace('.x', '.0') if '.x' in spec_str else spec_str
         self.versions_spec[requirement_name].add(spec_str)
 
