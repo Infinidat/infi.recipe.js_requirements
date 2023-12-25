@@ -12,7 +12,7 @@ from six import BytesIO
 from six.moves import urllib
 import requests
 from collections import defaultdict
-from semantic_version import Version, Spec
+from semantic_version import Version, NpmSpec
 import codecs
 import zc.buildout
 
@@ -149,7 +149,7 @@ class JSDep(object):
         :param str requirement_name: The package name
         :return Spec: All version specification
         """
-        return Spec(','.join(self.versions_spec[requirement_name]))
+        return NpmSpec(' '.join(self.versions_spec[requirement_name]))
 
     def _download_package(self, pkg_metadata, validate=True):
         """
