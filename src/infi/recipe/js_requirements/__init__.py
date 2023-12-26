@@ -119,7 +119,7 @@ class JSDep(object):
             if best_matching_version is None:
                 msg = 'Unmatched dependency for {}\nSpecification requirement: {}\nAvailable versions: {}\n' \
                       'Use NPM semver calculator to resolve: https://semver.npmjs.com/'
-                error = msg.format(requirement_name, spec, ', '.join(reversed(map(str, available_versions))))
+                error = msg.format(requirement_name, spec, ', '.join(reversed(list(map(str, available_versions)))))
                 raise RequirementMatchError(error)
 
             matching_versions[requirement_name] = best_matching_version
