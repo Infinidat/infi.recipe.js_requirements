@@ -119,7 +119,7 @@ class JSDep(object):
             if best_matching_version is None:
                 msg = 'Unmatched dependency for {}\nSpecification requirement: {}\nAvailable versions: {}\n' \
                       'Use NPM semver calculator to resolve: https://semver.npmjs.com/'
-                error = msg.format(requirement_name, spec, ', '.join(reversed(map(str, available_versions))))
+                error = msg.format(requirement_name, spec, ', '.join(reversed(list(map(str, available_versions)))))
                 raise RequirementMatchError(error)
 
             matching_versions[requirement_name] = best_matching_version
@@ -138,8 +138,8 @@ class JSDep(object):
         :param str requirement_name: The package name
         :param str spec_str: Semantic version constraint as string (e.g. >=1.1.0, ~2.3.0, ^3.4.5-pre.2+build.4)
         """
-        spec_str = spec_str or '>=0.0.0'
-        spec_str = spec_str.replace(' ', '')
+        if not spec_str:
+            return
         spec_str = '~' + spec_str.replace('.x', '.0') if '.x' in spec_str else spec_str
         self.versions_spec[requirement_name].add(spec_str)
 
