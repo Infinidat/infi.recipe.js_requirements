@@ -149,7 +149,16 @@ class JSDep(object):
         :param str requirement_name: The package name
         :return Spec: All version specification
         """
-        return NpmSpec(' '.join(self.versions_spec[requirement_name]))
+        # DEVOPS-1373
+        # We create NpmSpec obj for each ver dep separarely and then combine
+        # all the claueses.
+        npm_specs = [NpmSpec(version_spec) for version_spec in
+                     self.versions_spec[requirement_name]]
+        claueses = set()
+        for npm_spec in npm_specs:
+            claueses = claueses.union(npm_spec.clause)
+
+        return NpmSpec(' '.join(str(clause) for clause in claueses))
 
     def _download_package(self, pkg_metadata, validate=True):
         """
