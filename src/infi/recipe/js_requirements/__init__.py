@@ -150,15 +150,15 @@ class JSDep(object):
         :return Spec: All version specification
         """
         # DEVOPS-1373
-        # We create NpmSpec obj for each ver dep separarely and then combine
-        # all the claueses.
+        # We create NpmSpec obj for each ver dep separately and then combine
+        # all the clauses.
         npm_specs = [NpmSpec(version_spec) for version_spec in
                      self.versions_spec[requirement_name]]
-        claueses = set()
+        clauses = set()
         for npm_spec in npm_specs:
-            claueses = claueses.union(npm_spec.clause)
+            clauses = clauses.union(npm_spec.clause)
 
-        return NpmSpec(' '.join(str(clause) for clause in claueses))
+        return NpmSpec(' '.join(str(clause) for clause in clauses))
 
     def _download_package(self, pkg_metadata, validate=True):
         """
