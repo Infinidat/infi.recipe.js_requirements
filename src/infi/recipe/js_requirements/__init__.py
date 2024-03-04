@@ -158,7 +158,8 @@ class JSDep(object):
         for npm_spec in npm_specs:
             clauses = clauses.union(npm_spec.clause)
 
-        return NpmSpec(' '.join(str(clause) for clause in clauses))
+        # clauses use == instead of =
+        return NpmSpec(' '.join(str(clause) for clause in clauses).replace('==', '='))
 
     def _download_package(self, pkg_metadata, validate=True):
         """
